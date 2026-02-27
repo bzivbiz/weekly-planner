@@ -906,8 +906,9 @@
                               <div className="flex items-center gap-1">
                                 <input
                                   type="text"
-                                  value={getUrgency(taskData, dayIndex) ?? ''}
-                                  onChange={(e) => setUrgencyValue(task.id, dayIndex, e.target.value)}
+                                  key={`${task.id}-${dayIndex}-${getUrgency(taskData, dayIndex) ?? ''}`}
+                                  defaultValue={getUrgency(taskData, dayIndex) ?? ''}
+                                  onBlur={(e) => setUrgencyValue(task.id, dayIndex, e.target.value)}
                                   onKeyDown={(e) => {
                                     const numDays = DAYS.length;
                                     const taskIndex = sortedTasks.indexOf(task);
@@ -923,11 +924,17 @@
                                       nextDayIndex = (dayIndex - 1 + numDays) % numDays;
                                     } else if (e.key === 'ArrowRight') {
                                       nextDayIndex = (dayIndex + 1) % numDays;
+                                    } else if (e.key === 'Enter') {
+                                      // commit on Enter then move down
+                                      setUrgencyValue(task.id, dayIndex, e.target.value);
+                                      nextTaskIndex = (taskIndex + 1) % numTasks;
                                     } else {
                                       return;
                                     }
 
                                     e.preventDefault();
+                                    // Commit current value before moving
+                                    setUrgencyValue(task.id, dayIndex, e.target.value);
                                     const nextTaskId = sortedTasks[nextTaskIndex].id;
                                     const selector = `input[data-cell="${nextTaskId}-${nextDayIndex}"]`;
                                     const nextInput = document.querySelector(selector);
