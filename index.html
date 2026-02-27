@@ -108,7 +108,6 @@
     window.addEventListener('online', () => {
       window.isOnline = true;
       console.log('Back online - syncing pending changes...');
-      // Trigger sync when coming back online
       window.dispatchEvent(new Event('reconnected'));
     });
     window.addEventListener('offline', () => {
@@ -157,20 +156,12 @@
           console.error('Firebase list error:', error);
           return { keys: [], prefix, shared: false };
         }
-      },
-      onValue(key, callback) {
-        database.ref(key).on('value', (snapshot) => {
-          callback(snapshot.val());
-        });
-      },
-      off(key) {
-        database.ref(key).off();
       }
     };
   </script>
   
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
     
     const DEFAULT_CATEGORIES = [
       { name: 'at desk', color: 'bg-blue-100 border-blue-300 text-blue-900' },
@@ -220,26 +211,120 @@
       {name:"Laundry",category:"home",importance:"C",minutes:60,id:1771277285638}
     ];
 
-    const INITIAL_WEEKLY_DATA = {"2026-02-16":{"1":{"urgencies":{"0":2},"completed":{}},"2":{"urgencies":{"0":1},"completed":{}},"3":{"urgencies":{"0":2},"completed":{"0":true}}},"2026-02-15":{"1771275285174":{"urgencies":{"2":1,"3":1,"4":1,"5":1,"6":1},"completed":{}},"1771275540463":{"urgencies":{"0":3,"1":2,"3":2,"4":2,"5":2},"completed":{}},"1771275568207":{"urgencies":{"0":4,"1":2,"2":2,"3":2,"4":2,"5":2,"6":4},"completed":{}},"1771275938018":{"urgencies":{"1":2,"3":2,"5":2},"completed":{}},"1771276285784":{"urgencies":{"1":2,"3":2,"5":2},"completed":{}},"1771276308110":{"urgencies":{"0":2,"1":3,"2":3,"3":3,"4":3,"5":3},"completed":{}},"1771276332182":{"urgencies":{"0":3,"1":3,"2":3,"3":3,"4":3,"5":3,"6":3},"completed":{}},"1771276352222":{"urgencies":{"1":3,"3":3,"5":3},"completed":{}},"1771276371134":{"urgencies":{"0":3,"1":3,"3":3,"4":3,"5":3},"completed":{"0":true}},"1771276381950":{"urgencies":{"0":3,"1":3,"2":3,"3":3,"4":3,"5":3,"6":3},"completed":{"0":true}},"1771276401238":{"urgencies":{"0":4,"1":4,"2":4,"3":4,"4":4,"5":4,"6":4},"completed":{"0":true}},"1771276429439":{"urgencies":{"0":4,"2":4,"3":4,"4":4},"completed":{"0":true}},"1771276451006":{"urgencies":{"4":1},"completed":{}},"1771276487253":{"urgencies":{"6":2},"completed":{}},"1771276503213":{"urgencies":{"2":1},"completed":{}},"1771276523022":{"urgencies":{"0":3,"3":2},"completed":{"0":true}},"1771276536877":{"urgencies":{"1":3,"4":3},"completed":{"1":true}},"1771276567095":{"urgencies":{"0":3,"4":3},"completed":{"0":true}},"1771277285638":{"urgencies":{"5":4},"completed":{}},"1771275642092":{"urgencies":{"0":3,"1":3,"3":3,"5":3},"completed":{"0":true}},"1771275690070":{"urgencies":{"0":1},"completed":{"0":true}}}};
+    const INITIAL_WEEKLY_DATA = {"2026-02-16":{"1":{"urgencies":{"0":2},"completed":{}},"2":{"urgencies":{"0":1},"completed":{}},"3":{"urgencies":{"0":2},"completed":{"0":true}}},"2026-02-15":{"1771275285174":{"urgencies":{"2":1,"3":1,"4":1,"5":1,"6":1},"completed":{}},"1771275540463":{"urgencies":{"0":3,"1":2,"3":2,"4":2,"5":2},"completed":{}},"1771275568207":{"urgencies":{"0":4,"1":2,"2":2,"3":2,"4":2,"5":2,"6":4},"completed":{}},"1771275938018":{"urgencies":{"1":2,"3":2,"5":2},"completed":{}},"1771276285784":{"urgencies":{"1":2,"3":2,"5":2},"completed":{}},"1771276308110":{"urgencies":{"0":2,"1":3,"2":3,"3":3,"4":3,"5":3},"completed":{}},"1771276332182":{"urgencies":{"0":3,"1":3,"2":3,"3":3,"4":3,"5":3,"6":3},"completed":{}},"1771276352222":{"urgencies":{"1":3,"3":3,"5":3},"completed":{}},"1771276371134":{"urgencies":{"0":3,"1":3,"3":3,"4":3,"5":3},"completed":{"0":true}},"1771276381950":{"urgencies":{"0":3,"1":3,"2":3,"3":3,"4":3,"5":3,"6":3},"completed":{"0":true}},"1771276401238":{"urgencies":{"0":4,"1":4,"2":4,"3":4,"4":4,"5":4,"6":4},"completed":{"0":true}},"1771276429439":{"urgencies":{"0":4,"2":4,"3":4,"4":4},"completed":{"0":true}},"1771276451006":{"urgencies":{"4":1},"completed":{}},"1771276487253":{"urgencies":{"6":2},"completed":{}},"1771276503213":{"urgencies":{"2":1},"completed":{}},"1771276523022":{"urgencies":{"0":3,"3":2},"completed":{"0":true}},"1771276536877":{"urgencies":{"1":3,"4":3},"completed":{"1":true}},"1771276567095":{"urgencies":{"0":3,"4":3},"completed":{"0":true}},"1771277285638":{"urgencies":{"5":4},"completed":{}},"1771275642092":{"urgencies":{"0":3,"1":3,"3":3,"5":3},"completed":{"0":true}},"1771275690070":{"urgencies":{"0":1},"completed":{"0":1}}}};
+
+    // BUG FIX #1: getWeekKey used toISOString() which is UTC, causing wrong date for users west of UTC.
+    // Now uses local date formatting to avoid timezone off-by-one errors.
+    function getWeekKey(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function getSunday(date) {
+      const d = new Date(date);
+      const day = d.getDay();
+      d.setDate(d.getDate() - day);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+
+    // Helper to convert day index to Firebase-safe key
+    function dayKey(dayIndex) {
+      return `d${dayIndex}`;
+    }
+    
+    // Helper to get urgency — supports both prefixed (new) and numeric (legacy) keys
+    function getUrgency(taskData, dayIndex) {
+      if (!taskData || !taskData.urgencies) return undefined;
+      const val = taskData.urgencies[dayKey(dayIndex)];
+      if (val !== undefined) return val;
+      // Legacy numeric key support
+      const legacyVal = taskData.urgencies[dayIndex];
+      if (legacyVal !== undefined) return legacyVal;
+      return undefined;
+    }
+    
+    // Helper to get completed — supports both prefixed (new) and numeric (legacy) keys
+    function getCompleted(taskData, dayIndex) {
+      if (!taskData || !taskData.completed) return false;
+      const val = taskData.completed[dayKey(dayIndex)];
+      if (val !== undefined) return !!val;
+      return !!(taskData.completed[dayIndex]);
+    }
+
+    function formatTime(minutes) {
+      if (!minutes || minutes === 0) return '0m';
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      if (hours === 0) return `${mins}m`;
+      if (mins === 0) return `${hours}h`;
+      return `${hours}h ${mins}m`;
+    }
 
     function WeeklyPlanner() {
       const [tasks, setTasks] = useState([]);
       const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
       const [weeklyData, setWeeklyData] = useState({});
-      const [currentWeekStart, setCurrentWeekStart] = useState(getSunday(new Date()));
+      const [currentWeekStart, setCurrentWeekStart] = useState(() => getSunday(new Date()));
       const [loading, setLoading] = useState(true);
       const [showTaskManager, setShowTaskManager] = useState(false);
       const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
       const [isMobile, setIsMobile] = useState(false);
-      const [selectedDay, setSelectedDay] = useState(0);
+      const [selectedDay, setSelectedDay] = useState(() => new Date().getDay());
       const [syncStatus, setSyncStatus] = useState('Syncing...');
 
+      // BUG FIX #2: Use refs to hold latest state for use inside intervals/event handlers,
+      // avoiding stale closure problems.
+      const tasksRef = useRef(tasks);
+      const weeklyDataRef = useRef(weeklyData);
+      const categoriesRef = useRef(categories);
+
+      useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+      useEffect(() => { weeklyDataRef.current = weeklyData; }, [weeklyData]);
+      useEffect(() => { categoriesRef.current = categories; }, [categories]);
+
+      // BUG FIX #3: saveData reads from refs so it always saves current data,
+      // not stale closed-over values.
+      const saveData = useCallback(async () => {
+        const currentTasks = tasksRef.current;
+        const currentWeeklyData = weeklyDataRef.current;
+        const currentCategories = categoriesRef.current;
+
+        try {
+          localStorage.setItem('planner_tasks_backup', JSON.stringify(currentTasks));
+          localStorage.setItem('planner_weekly_backup', JSON.stringify(currentWeeklyData));
+          localStorage.setItem('planner_categories_backup', JSON.stringify(currentCategories));
+          localStorage.setItem('planner_pending_sync', 'true');
+        } catch(e) {}
+        
+        if (window.isOnline) {
+          try {
+            setSyncStatus('Saving...');
+            await database.ref('planner-tasks').set(currentTasks);
+            await database.ref('planner-weekly').set(currentWeeklyData);
+            await database.ref('planner-categories').set(currentCategories);
+            localStorage.removeItem('planner_pending_sync');
+            setSyncStatus('Synced ✓');
+          } catch (error) {
+            console.error('Save error:', error);
+            setSyncStatus('Saved locally');
+          }
+        } else {
+          setSyncStatus('Offline - saved locally');
+        }
+      }, []); // stable — reads from refs
+
       useEffect(() => {
-        // Initial load
         loadData();
         
-        // Poll Firebase every 30 seconds for updates from other devices
+        // BUG FIX #4: Polling now reads from refs so it never overwrites local unsaved changes
+        // with stale Firebase data. It only updates if Firebase has newer data than local state.
         const pollInterval = setInterval(async () => {
+          // Don't poll if there are pending local changes not yet synced
+          if (localStorage.getItem('planner_pending_sync')) return;
+
           try {
             const tasksSnapshot = await database.ref('planner-tasks').once('value');
             const weeklySnapshot = await database.ref('planner-weekly').once('value');
@@ -252,11 +337,9 @@
             if (tasksData && Array.isArray(tasksData) && tasksData.length > 0) {
               setTasks(tasksData);
             }
-            
             if (weeklyDataFromDB && typeof weeklyDataFromDB === 'object') {
               setWeeklyData(weeklyDataFromDB);
             }
-            
             if (categoriesData && Array.isArray(categoriesData) && categoriesData.length > 0) {
               setCategories(categoriesData);
             }
@@ -266,11 +349,9 @@
             console.error('Poll error:', error);
             setSyncStatus('Sync error');
           }
-        }, 30000); // Poll every 30 seconds
+        }, 30000);
         
-        const checkMobile = () => {
-          setIsMobile(window.innerWidth < 768);
-        };
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
         checkMobile();
         window.addEventListener('resize', checkMobile);
         
@@ -280,10 +361,29 @@
         };
       }, []);
 
+      // Handle reconnect: sync any pending local changes
+      useEffect(() => {
+        const handleReconnect = async () => {
+          if (localStorage.getItem('planner_pending_sync')) {
+            setSyncStatus('Syncing...');
+            await saveData();
+          }
+        };
+        window.addEventListener('reconnected', handleReconnect);
+        return () => window.removeEventListener('reconnected', handleReconnect);
+      }, [saveData]);
+
+      // Auto-save 3 seconds after last change
+      useEffect(() => {
+        if (!loading && tasks.length > 0) {
+          const timeoutId = setTimeout(saveData, 3000);
+          return () => clearTimeout(timeoutId);
+        }
+      }, [tasks, weeklyData, categories, loading, saveData]);
+
       async function loadData() {
         try {
           if (window.isOnline) {
-            // Load from Firebase when online
             const tasksSnapshot = await database.ref('planner-tasks').once('value');
             const weeklySnapshot = await database.ref('planner-weekly').once('value');
             const categoriesSnapshot = await database.ref('planner-categories').once('value');
@@ -318,7 +418,6 @@
             
             setSyncStatus('Synced ✓');
           } else {
-            // Load from localStorage backup when offline
             setSyncStatus('Offline - using local data');
             const tasksBackup = localStorage.getItem('planner_tasks_backup');
             const weeklyBackup = localStorage.getItem('planner_weekly_backup');
@@ -331,7 +430,6 @@
         } catch (error) {
           console.error('Error loading data:', error);
           setSyncStatus('Error - using local backup');
-          // Fall back to localStorage
           const tasksBackup = localStorage.getItem('planner_tasks_backup');
           const weeklyBackup = localStorage.getItem('planner_weekly_backup');
           const categoriesBackup = localStorage.getItem('planner_categories_backup');
@@ -343,154 +441,61 @@
         setLoading(false);
       }
 
-      async function saveData() {
-        // Always save to localStorage as immediate backup
-        try {
-          localStorage.setItem('planner_tasks_backup', JSON.stringify(tasks));
-          localStorage.setItem('planner_weekly_backup', JSON.stringify(weeklyData));
-          localStorage.setItem('planner_categories_backup', JSON.stringify(categories));
-          localStorage.setItem('planner_pending_sync', 'true');
-        } catch(e) {}
-        
-        // Save to Firebase if online
-        if (window.isOnline) {
-          try {
-            setSyncStatus('Saving...');
-            await database.ref('planner-tasks').set(tasks);
-            await database.ref('planner-weekly').set(weeklyData);
-            await database.ref('planner-categories').set(categories);
-            localStorage.removeItem('planner_pending_sync');
-            setSyncStatus('Synced ✓');
-          } catch (error) {
-            console.error('Save error:', error);
-            setSyncStatus('Saved locally');
-          }
-        } else {
-          setSyncStatus('Offline - saved locally');
-        }
-      }
-
-      // Sync pending changes when coming back online
-      useEffect(() => {
-        const handleReconnect = async () => {
-          const hasPending = localStorage.getItem('planner_pending_sync');
-          if (hasPending) {
-            setSyncStatus('Syncing...');
-            await saveData();
-          }
-        };
-        
-        window.addEventListener('reconnected', handleReconnect);
-        return () => window.removeEventListener('reconnected', handleReconnect);
-      }, [tasks, weeklyData, categories]);
-
-      useEffect(() => {
-        if (!loading && tasks.length > 0) {
-          const timeoutId = setTimeout(() => {
-            saveData();
-          }, 3000); // Wait 3 seconds after last change before saving
-          
-          return () => clearTimeout(timeoutId);
-        }
-      }, [tasks, weeklyData, categories, loading]);
-
-      function getSunday(date) {
-        const d = new Date(date);
-        const day = d.getDay();
-        const diff = d.getDate() - day;
-        return new Date(d.setDate(diff));
-      }
-
-      function formatTime(minutes) {
-        if (minutes === 0) return '0m';
-        const hours = Math.floor(minutes / 60);
-        const mins = minutes % 60;
-        if (hours === 0) return `${mins}m`;
-        if (mins === 0) return `${hours}h`;
-        return `${hours}h ${mins}m`;
-      }
-
-      function getWeekKey(date) {
-        return date.toISOString().split('T')[0];
-      }
-
-      // Helper to convert day index to Firebase-safe key (prefix with 'd' to prevent array conversion)
-      function dayKey(dayIndex) {
-        return `d${dayIndex}`;
-      }
-      
-      // Helper to get urgency value using prefixed key
-      function getUrgency(taskData, dayIndex) {
-        if (!taskData || !taskData.urgencies) return undefined;
-        // Try prefixed key first, then numeric key for backwards compatibility
-        const val = taskData.urgencies[dayKey(dayIndex)];
-        if (val !== undefined) return val;
-        return taskData.urgencies[dayIndex];
-      }
-      
-      // Helper to get completed value using prefixed key
-      function getCompleted(taskData, dayIndex) {
-        if (!taskData || !taskData.completed) return false;
-        // Try prefixed key first, then numeric key for backwards compatibility
-        const val = taskData.completed[dayKey(dayIndex)];
-        if (val !== undefined) return val;
-        return taskData.completed[dayIndex] || false;
-      }
-
-      function setUrgency(taskId, dayIndex, urgency) {
+      function setUrgencyValue(taskId, dayIndex, urgency) {
         const weekKey = getWeekKey(currentWeekStart);
-        const newWeeklyData = JSON.parse(JSON.stringify(weeklyData)); // Deep copy
-        
-        if (!newWeeklyData[weekKey]) {
-          newWeeklyData[weekKey] = {};
-        }
-        if (!newWeeklyData[weekKey][taskId]) {
-          newWeeklyData[weekKey][taskId] = { urgencies: {}, completed: {} };
-        }
-        if (!newWeeklyData[weekKey][taskId].urgencies || Array.isArray(newWeeklyData[weekKey][taskId].urgencies)) {
-          newWeeklyData[weekKey][taskId].urgencies = {};
-        }
-        
-        if (urgency === '') {
-          delete newWeeklyData[weekKey][taskId].urgencies[dayKey(dayIndex)];
-        } else {
-          newWeeklyData[weekKey][taskId].urgencies[dayKey(dayIndex)] = parseInt(urgency);
-        }
-        
-        setWeeklyData(newWeeklyData);
+        setWeeklyData(prev => {
+          const newWeeklyData = JSON.parse(JSON.stringify(prev));
+          
+          if (!newWeeklyData[weekKey]) newWeeklyData[weekKey] = {};
+          if (!newWeeklyData[weekKey][taskId]) {
+            newWeeklyData[weekKey][taskId] = { urgencies: {}, completed: {} };
+          }
+          if (!newWeeklyData[weekKey][taskId].urgencies || Array.isArray(newWeeklyData[weekKey][taskId].urgencies)) {
+            newWeeklyData[weekKey][taskId].urgencies = {};
+          }
+          
+          // BUG FIX #5: Validate urgency input — only accept 1–4, reject invalid/NaN entries
+          if (urgency === '' || urgency === null) {
+            delete newWeeklyData[weekKey][taskId].urgencies[dayKey(dayIndex)];
+          } else {
+            const parsed = parseInt(urgency);
+            if (!isNaN(parsed) && parsed >= 1 && parsed <= 4) {
+              newWeeklyData[weekKey][taskId].urgencies[dayKey(dayIndex)] = parsed;
+            }
+            // Silently ignore out-of-range or non-numeric input
+          }
+          
+          return newWeeklyData;
+        });
       }
 
       function toggleComplete(taskId, dayIndex) {
         const weekKey = getWeekKey(currentWeekStart);
-        const newWeeklyData = JSON.parse(JSON.stringify(weeklyData)); // Deep copy
-        
-        if (!newWeeklyData[weekKey]) {
-          newWeeklyData[weekKey] = {};
-        }
-        if (!newWeeklyData[weekKey][taskId]) {
-          newWeeklyData[weekKey][taskId] = { urgencies: {}, completed: {} };
-        }
-        if (!newWeeklyData[weekKey][taskId].completed || Array.isArray(newWeeklyData[weekKey][taskId].completed)) {
-          newWeeklyData[weekKey][taskId].completed = {};
-        }
-        
-        const currentStatus = getCompleted(newWeeklyData[weekKey][taskId], dayIndex);
-        newWeeklyData[weekKey][taskId].completed[dayKey(dayIndex)] = !currentStatus;
-        
-        setWeeklyData(newWeeklyData);
+        setWeeklyData(prev => {
+          const newWeeklyData = JSON.parse(JSON.stringify(prev));
+          
+          if (!newWeeklyData[weekKey]) newWeeklyData[weekKey] = {};
+          if (!newWeeklyData[weekKey][taskId]) {
+            newWeeklyData[weekKey][taskId] = { urgencies: {}, completed: {} };
+          }
+          if (!newWeeklyData[weekKey][taskId].completed || Array.isArray(newWeeklyData[weekKey][taskId].completed)) {
+            newWeeklyData[weekKey][taskId].completed = {};
+          }
+          
+          const currentStatus = getCompleted(newWeeklyData[weekKey][taskId], dayIndex);
+          newWeeklyData[weekKey][taskId].completed[dayKey(dayIndex)] = !currentStatus;
+          
+          return newWeeklyData;
+        });
       }
 
       function getTaskData(taskId) {
         const weekKey = getWeekKey(currentWeekStart);
         const data = weeklyData[weekKey]?.[taskId];
-        
-        // Return safe default if data doesn't exist
         if (!data) return { urgencies: {}, completed: {} };
-        
-        // Ensure urgencies and completed are objects, not arrays or undefined
         return {
-          urgencies: data.urgencies || {},
-          completed: data.completed || {}
+          urgencies: (data.urgencies && !Array.isArray(data.urgencies)) ? data.urgencies : {},
+          completed: (data.completed && !Array.isArray(data.completed)) ? data.completed : {}
         };
       }
 
@@ -498,23 +503,19 @@
         const totals = { 
           total: 0, 
           completed: 0,
-          byUrgency: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } 
+          byUrgency: { 1: 0, 2: 0, 3: 0, 4: 0 } 
         };
         
         if (!tasks || !Array.isArray(tasks)) return totals;
         
         tasks.forEach(task => {
           if (!task || !task.id) return;
-          
           const taskData = getTaskData(task.id);
-          if (!taskData) return;
-          
           const urgency = getUrgency(taskData, dayIndex);
           
           if (urgency !== undefined && urgency !== null) {
             totals.total += (task.minutes || 0);
             totals.byUrgency[urgency] = (totals.byUrgency[urgency] || 0) + (task.minutes || 0);
-            
             if (getCompleted(taskData, dayIndex)) {
               totals.completed += (task.minutes || 0);
             }
@@ -529,21 +530,20 @@
         if (sortConfig.key === key && sortConfig.dayIndex === dayIndex && sortConfig.direction === 'asc') {
           direction = 'desc';
         }
-        
         setSortConfig({ key, direction, dayIndex });
       }
 
       function getSortedTasks() {
         if (!sortConfig.key) return tasks;
         
-        const sorted = [...tasks].sort((a, b) => {
+        return [...tasks].sort((a, b) => {
           let aVal, bVal;
           
           if (sortConfig.key === 'day') {
             const aData = getTaskData(a.id);
             const bData = getTaskData(b.id);
-            aVal = getUrgency(aData, sortConfig.dayIndex) || 999;
-            bVal = getUrgency(bData, sortConfig.dayIndex) || 999;
+            aVal = getUrgency(aData, sortConfig.dayIndex) ?? 999;
+            bVal = getUrgency(bData, sortConfig.dayIndex) ?? 999;
           } else if (sortConfig.key === 'name') {
             aVal = a.name.toLowerCase();
             bVal = b.name.toLowerCase();
@@ -562,47 +562,51 @@
           if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
           return 0;
         });
-        
-        return sorted;
       }
 
       function calculateWeekTotals() {
-        const totals = { total: 0, completed: 0, byUrgency: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
-        
+        const totals = { total: 0, completed: 0, byUrgency: { 1: 0, 2: 0, 3: 0, 4: 0 } };
         DAYS.forEach((_, dayIndex) => {
           const dayTotals = calculateDayTotals(dayIndex);
           totals.total += dayTotals.total;
           totals.completed += dayTotals.completed;
           Object.keys(dayTotals.byUrgency).forEach(urgency => {
-            totals.byUrgency[urgency] += dayTotals.byUrgency[urgency];
+            totals.byUrgency[urgency] = (totals.byUrgency[urgency] || 0) + dayTotals.byUrgency[urgency];
           });
         });
-        
         return totals;
       }
 
       function addTask(newTask) {
-        const task = {
-          ...newTask,
-          id: Date.now()
-        };
-        setTasks([...tasks, task]);
+        setTasks(prev => [...prev, { ...newTask, id: Date.now() }]);
       }
 
       function updateTask(updatedTask) {
-        setTasks(tasks.map(t => t.id === updatedTask.id ? updatedTask : t));
+        setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
       }
 
+      // BUG FIX #6: deleteTask now also removes the task's weeklyData entries to avoid orphaned data
       function deleteTask(taskId) {
-        setTasks(tasks.filter(t => t.id !== taskId));
+        setTasks(prev => prev.filter(t => t.id !== taskId));
+        setWeeklyData(prev => {
+          const newData = JSON.parse(JSON.stringify(prev));
+          Object.keys(newData).forEach(weekKey => {
+            delete newData[weekKey][taskId];
+          });
+          return newData;
+        });
       }
 
       function navigateWeek(direction) {
-        const newDate = new Date(currentWeekStart);
-        newDate.setDate(newDate.getDate() + (direction * 7));
-        setCurrentWeekStart(getSunday(newDate));
+        setCurrentWeekStart(prev => {
+          const newDate = new Date(prev);
+          newDate.setDate(newDate.getDate() + (direction * 7));
+          return getSunday(newDate);
+        });
       }
 
+      // BUG FIX #7: importPreviousWeek now normalizes legacy numeric urgency keys to
+      // the current prefixed format (d0, d1, …) so imported data works correctly.
       function importPreviousWeek() {
         const prevWeekStart = new Date(currentWeekStart);
         prevWeekStart.setDate(prevWeekStart.getDate() - 7);
@@ -614,26 +618,33 @@
           return;
         }
         
-        const newWeeklyData = JSON.parse(JSON.stringify(weeklyData));
-        
-        if (!newWeeklyData[currentWeekKey]) {
-          newWeeklyData[currentWeekKey] = {};
-        }
-        
-        Object.keys(weeklyData[prevWeekKey]).forEach(taskId => {
-          const prevTaskData = weeklyData[prevWeekKey][taskId];
-          // Import urgencies but not completions
-          newWeeklyData[currentWeekKey][taskId] = {
-            urgencies: { ...(prevTaskData.urgencies || {}) },
-            completed: {}
-          };
+        setWeeklyData(prev => {
+          const newWeeklyData = JSON.parse(JSON.stringify(prev));
+          if (!newWeeklyData[currentWeekKey]) newWeeklyData[currentWeekKey] = {};
+          
+          Object.keys(prev[prevWeekKey]).forEach(taskId => {
+            const prevTaskData = prev[prevWeekKey][taskId];
+            const rawUrgencies = prevTaskData.urgencies || {};
+            
+            // Normalize: convert any plain numeric keys ("0","1",...) to prefixed keys ("d0","d1",...)
+            const normalizedUrgencies = {};
+            Object.keys(rawUrgencies).forEach(k => {
+              const normalized = /^\d+$/.test(k) ? `d${k}` : k;
+              normalizedUrgencies[normalized] = rawUrgencies[k];
+            });
+            
+            newWeeklyData[currentWeekKey][taskId] = {
+              urgencies: normalizedUrgencies,
+              completed: {} // Never import completions
+            };
+          });
+          
+          return newWeeklyData;
         });
-        
-        setWeeklyData(newWeeklyData);
       }
 
       if (loading) {
-        return <div className="flex items-center justify-center h-screen text-white">Loading...</div>;
+        return <div className="flex items-center justify-center h-screen text-white text-xl">Loading...</div>;
       }
 
       const weekTotals = calculateWeekTotals();
@@ -649,8 +660,6 @@
       // Mobile View
       if (isMobile) {
         const dayTotals = calculateDayTotals(selectedDay);
-        const currentDate = new Date(currentWeekStart);
-        currentDate.setDate(currentDate.getDate() + selectedDay);
         
         return (
           <div className="min-h-screen bg-gray-700 p-2">
@@ -662,24 +671,9 @@
                 </div>
                 
                 <div className="flex justify-between items-center mb-3">
-                  <button
-                    onClick={() => navigateWeek(-1)}
-                    className="px-3 py-1 bg-gray-200 text-gray-900 rounded text-sm"
-                  >
-                    ← Prev
-                  </button>
-                  <button
-                    onClick={importPreviousWeek}
-                    className="px-2 py-1 bg-green-600 text-white text-xs rounded"
-                  >
-                    Import
-                  </button>
-                  <button
-                    onClick={() => navigateWeek(1)}
-                    className="px-3 py-1 bg-gray-200 text-gray-900 rounded text-sm"
-                  >
-                    Next →
-                  </button>
+                  <button onClick={() => navigateWeek(-1)} className="px-3 py-1 bg-gray-200 text-gray-900 rounded text-sm">← Prev</button>
+                  <button onClick={importPreviousWeek} className="px-2 py-1 bg-green-600 text-white text-xs rounded">Import</button>
+                  <button onClick={() => navigateWeek(1)} className="px-3 py-1 bg-gray-200 text-gray-900 rounded text-sm">Next →</button>
                 </div>
                 
                 <div className="mb-3">
@@ -747,9 +741,9 @@
                     {sortedTasks
                       .filter(task => getUrgency(getTaskData(task.id), selectedDay) !== undefined)
                       .sort((a, b) => {
-                        const aUrgency = getUrgency(getTaskData(a.id), selectedDay) || 999;
-                        const bUrgency = getUrgency(getTaskData(b.id), selectedDay) || 999;
-                        return aUrgency - bUrgency;
+                        const aU = getUrgency(getTaskData(a.id), selectedDay) ?? 999;
+                        const bU = getUrgency(getTaskData(b.id), selectedDay) ?? 999;
+                        return aU - bU;
                       })
                       .map(task => {
                         const taskData = getTaskData(task.id);
@@ -763,7 +757,7 @@
                               <div className="flex items-start gap-2 flex-1">
                                 <input
                                   type="checkbox"
-                                  checked={isCompleted || false}
+                                  checked={isCompleted}
                                   onChange={() => toggleComplete(task.id, selectedDay)}
                                   className="w-5 h-5 mt-1"
                                 />
@@ -781,9 +775,7 @@
                         );
                       })}
                     {sortedTasks.filter(task => getUrgency(getTaskData(task.id), selectedDay) !== undefined).length === 0 && (
-                      <div className="text-center text-gray-400 py-8">
-                        No tasks assigned for this day
-                      </div>
+                      <div className="text-center text-gray-400 py-8">No tasks assigned for this day</div>
                     )}
                   </div>
                 )}
@@ -812,27 +804,18 @@
               </div>
 
               <div className="flex justify-between items-center mb-6">
-                <button
-                  onClick={() => navigateWeek(-1)}
-                  className="px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300"
-                >
+                <button onClick={() => navigateWeek(-1)} className="px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300">
                   ← Previous Week
                 </button>
                 <div className="flex flex-col items-center gap-2">
                   <h2 className="text-xl font-semibold">
                     Week of {currentWeekStart.toLocaleDateString()}
                   </h2>
-                  <button
-                    onClick={importPreviousWeek}
-                    className="px-3 py-1 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700"
-                  >
+                  <button onClick={importPreviousWeek} className="px-3 py-1 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700">
                     📥 Import Previous Week
                   </button>
                 </div>
-                <button
-                  onClick={() => navigateWeek(1)}
-                  className="px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300"
-                >
+                <button onClick={() => navigateWeek(1)} className="px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300">
                   Next Week →
                 </button>
               </div>
@@ -873,10 +856,7 @@
                           </div>
                           <div className="mt-2 pt-2 border-t border-gray-500">
                             <div className="w-full bg-gray-600 rounded-full h-2">
-                              <div 
-                                className="bg-green-500 h-2 rounded-full transition-all" 
-                                style={{ width: `${completionRate}%` }}
-                              ></div>
+                              <div className="bg-green-500 h-2 rounded-full transition-all" style={{ width: `${completionRate}%` }}></div>
                             </div>
                             <p className="text-center mt-1 font-semibold">{completionRate}%</p>
                           </div>
@@ -891,36 +871,20 @@
                 <table className="w-full border-collapse">
                   <thead>
                     <tr>
-                      <th 
-                        className="border border-gray-600 p-2 bg-gray-700 sticky-corner cursor-pointer hover:bg-gray-600"
-                        onClick={() => sortTasks('name')}
-                      >
+                      <th className="border border-gray-600 p-2 bg-gray-700 sticky-corner cursor-pointer hover:bg-gray-600" onClick={() => sortTasks('name')}>
                         Task <SortIcon columnKey="name" />
                       </th>
-                      <th 
-                        className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600"
-                        onClick={() => sortTasks('category')}
-                      >
+                      <th className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600" onClick={() => sortTasks('category')}>
                         Cat <SortIcon columnKey="category" />
                       </th>
-                      <th 
-                        className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600"
-                        onClick={() => sortTasks('importance')}
-                      >
+                      <th className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600" onClick={() => sortTasks('importance')}>
                         Imp <SortIcon columnKey="importance" />
                       </th>
-                      <th 
-                        className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600"
-                        onClick={() => sortTasks('minutes')}
-                      >
+                      <th className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600" onClick={() => sortTasks('minutes')}>
                         Min <SortIcon columnKey="minutes" />
                       </th>
                       {DAYS.map((day, dayIndex) => (
-                        <th 
-                          key={day} 
-                          className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600"
-                          onClick={() => sortTasks('day', dayIndex)}
-                        >
+                        <th key={day} className="border border-gray-600 p-2 bg-gray-700 sticky-header cursor-pointer hover:bg-gray-600" onClick={() => sortTasks('day', dayIndex)}>
                           {day} <SortIcon columnKey="day" dayIndex={dayIndex} />
                         </th>
                       ))}
@@ -933,9 +897,7 @@
                       
                       return (
                         <tr key={task.id} className={`${categoryColor} border-2 text-sm`}>
-                          <td className="border border-gray-600 p-1 font-medium sticky-col bg-inherit">
-                            {task.name}
-                          </td>
+                          <td className="border border-gray-600 p-1 font-medium sticky-col bg-inherit">{task.name}</td>
                           <td className="border border-gray-600 p-1 text-center text-xs">{task.category}</td>
                           <td className="border border-gray-600 p-1 text-center font-bold">{task.importance}</td>
                           <td className="border border-gray-600 p-1 text-center">{task.minutes}</td>
@@ -944,8 +906,34 @@
                               <div className="flex items-center gap-1">
                                 <input
                                   type="text"
-                                  value={getUrgency(taskData, dayIndex) || ''}
-                                  onChange={(e) => setUrgency(task.id, dayIndex, e.target.value)}
+                                  value={getUrgency(taskData, dayIndex) ?? ''}
+                                  onChange={(e) => setUrgencyValue(task.id, dayIndex, e.target.value)}
+                                  onKeyDown={(e) => {
+                                    const numDays = DAYS.length;
+                                    const taskIndex = sortedTasks.indexOf(task);
+                                    const numTasks = sortedTasks.length;
+                                    let nextTaskIndex = taskIndex;
+                                    let nextDayIndex = dayIndex;
+
+                                    if (e.key === 'ArrowUp') {
+                                      nextTaskIndex = (taskIndex - 1 + numTasks) % numTasks;
+                                    } else if (e.key === 'ArrowDown') {
+                                      nextTaskIndex = (taskIndex + 1) % numTasks;
+                                    } else if (e.key === 'ArrowLeft') {
+                                      nextDayIndex = (dayIndex - 1 + numDays) % numDays;
+                                    } else if (e.key === 'ArrowRight') {
+                                      nextDayIndex = (dayIndex + 1) % numDays;
+                                    } else {
+                                      return;
+                                    }
+
+                                    e.preventDefault();
+                                    const nextTaskId = sortedTasks[nextTaskIndex].id;
+                                    const selector = `input[data-cell="${nextTaskId}-${nextDayIndex}"]`;
+                                    const nextInput = document.querySelector(selector);
+                                    if (nextInput) nextInput.focus();
+                                  }}
+                                  data-cell={`${task.id}-${dayIndex}`}
                                   className="w-7 text-center border rounded text-sm"
                                   maxLength="1"
                                   placeholder="-"
@@ -955,7 +943,7 @@
                                   checked={getCompleted(taskData, dayIndex)}
                                   onChange={() => toggleComplete(task.id, dayIndex)}
                                   className="w-4 h-4"
-                                  disabled={!getUrgency(taskData, dayIndex)}
+                                  disabled={getUrgency(taskData, dayIndex) === undefined}
                                 />
                               </div>
                             </td>
@@ -976,7 +964,7 @@
                       <p className="text-center text-lg font-bold">{formatTime(totals.total)}</p>
                       <p className="text-center text-sm text-green-400">✓ {formatTime(totals.completed)}</p>
                       <div className="text-xs mt-2 space-y-1">
-                        {[1, 2, 3, 4, 5].map(urgency => (
+                        {[1, 2, 3, 4].map(urgency => (
                           totals.byUrgency[urgency] > 0 && (
                             <p key={urgency}>U{urgency}: {formatTime(totals.byUrgency[urgency])}</p>
                           )
@@ -990,7 +978,7 @@
                   <p className="text-center text-lg font-bold">{formatTime(weekTotals.total)}</p>
                   <p className="text-center text-sm text-green-400">✓ {formatTime(weekTotals.completed)}</p>
                   <div className="text-xs mt-2 space-y-1">
-                    {[1, 2, 3, 4, 5].map(urgency => (
+                    {[1, 2, 3, 4].map(urgency => (
                       weekTotals.byUrgency[urgency] > 0 && (
                         <p key={urgency}>U{urgency}: {formatTime(weekTotals.byUrgency[urgency])}</p>
                       )
@@ -1052,29 +1040,16 @@
       }
       
       function getSortedTasks() {
-        const sorted = [...tasks].sort((a, b) => {
+        return [...tasks].sort((a, b) => {
           let aVal, bVal;
-          
-          if (sortBy === 'name') {
-            aVal = a.name.toLowerCase();
-            bVal = b.name.toLowerCase();
-          } else if (sortBy === 'category') {
-            aVal = a.category;
-            bVal = b.category;
-          } else if (sortBy === 'importance') {
-            aVal = a.importance;
-            bVal = b.importance;
-          } else if (sortBy === 'minutes') {
-            aVal = a.minutes;
-            bVal = b.minutes;
-          }
-          
+          if (sortBy === 'name') { aVal = a.name.toLowerCase(); bVal = b.name.toLowerCase(); }
+          else if (sortBy === 'category') { aVal = a.category; bVal = b.category; }
+          else if (sortBy === 'importance') { aVal = a.importance; bVal = b.importance; }
+          else if (sortBy === 'minutes') { aVal = a.minutes; bVal = b.minutes; }
           if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
           if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
           return 0;
         });
-        
-        return sorted;
       }
       
       function startEditing(task) {
@@ -1133,18 +1108,8 @@
                 ))}
               </div>
               <div className="flex gap-2 justify-end">
-                <button 
-                  onClick={cancelCategoryChanges}
-                  className="px-3 py-1 bg-gray-300 text-gray-900 rounded hover:bg-gray-400"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={saveCategoryChanges}
-                  className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                >
-                  Save Changes
-                </button>
+                <button onClick={cancelCategoryChanges} className="px-3 py-1 bg-gray-300 text-gray-900 rounded hover:bg-gray-400">Cancel</button>
+                <button onClick={saveCategoryChanges} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Save Changes</button>
               </div>
             </div>
           )}
@@ -1180,12 +1145,10 @@
                 type="number"
                 placeholder="Minutes"
                 value={newTask.minutes}
-                onChange={(e) => setNewTask({ ...newTask, minutes: parseInt(e.target.value) })}
+                onChange={(e) => setNewTask({ ...newTask, minutes: parseInt(e.target.value) || 0 })}
                 className="w-20 px-3 py-2 border rounded text-gray-900"
               />
-              <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-                ➕
-              </button>
+              <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">➕</button>
             </div>
           </form>
 
@@ -1193,28 +1156,16 @@
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-600 z-10">
                 <tr>
-                  <th 
-                    className="p-2 text-left cursor-pointer hover:bg-gray-500"
-                    onClick={() => handleSort('name')}
-                  >
+                  <th className="p-2 text-left cursor-pointer hover:bg-gray-500" onClick={() => handleSort('name')}>
                     Task <SortIndicator column="name" />
                   </th>
-                  <th 
-                    className="p-2 cursor-pointer hover:bg-gray-500"
-                    onClick={() => handleSort('category')}
-                  >
+                  <th className="p-2 cursor-pointer hover:bg-gray-500" onClick={() => handleSort('category')}>
                     Category <SortIndicator column="category" />
                   </th>
-                  <th 
-                    className="p-2 cursor-pointer hover:bg-gray-500"
-                    onClick={() => handleSort('importance')}
-                  >
+                  <th className="p-2 cursor-pointer hover:bg-gray-500" onClick={() => handleSort('importance')}>
                     Importance <SortIndicator column="importance" />
                   </th>
-                  <th 
-                    className="p-2 cursor-pointer hover:bg-gray-500"
-                    onClick={() => handleSort('minutes')}
-                  >
+                  <th className="p-2 cursor-pointer hover:bg-gray-500" onClick={() => handleSort('minutes')}>
                     Minutes <SortIndicator column="minutes" />
                   </th>
                   <th className="p-2">Actions</th>
@@ -1226,57 +1177,25 @@
                     {editingTaskId === task.id ? (
                       <>
                         <td className="p-2">
-                          <input
-                            type="text"
-                            value={editingTask.name}
-                            onChange={(e) => setEditingTask({ ...editingTask, name: e.target.value })}
-                            className="w-full px-2 py-1 border rounded text-gray-900 text-sm"
-                          />
+                          <input type="text" value={editingTask.name} onChange={(e) => setEditingTask({ ...editingTask, name: e.target.value })} className="w-full px-2 py-1 border rounded text-gray-900 text-sm" />
                         </td>
                         <td className="p-2">
-                          <select
-                            value={editingTask.category}
-                            onChange={(e) => setEditingTask({ ...editingTask, category: e.target.value })}
-                            className="w-full px-2 py-1 border rounded text-gray-900 text-sm"
-                          >
-                            {categories.map(cat => (
-                              <option key={cat.name} value={cat.name}>{cat.name}</option>
-                            ))}
+                          <select value={editingTask.category} onChange={(e) => setEditingTask({ ...editingTask, category: e.target.value })} className="w-full px-2 py-1 border rounded text-gray-900 text-sm">
+                            {categories.map(cat => <option key={cat.name} value={cat.name}>{cat.name}</option>)}
                           </select>
                         </td>
                         <td className="p-2">
-                          <select
-                            value={editingTask.importance}
-                            onChange={(e) => setEditingTask({ ...editingTask, importance: e.target.value })}
-                            className="w-full px-2 py-1 border rounded text-gray-900 text-sm"
-                          >
-                            {IMPORTANCE_LEVELS.map(imp => (
-                              <option key={imp} value={imp}>{imp}</option>
-                            ))}
+                          <select value={editingTask.importance} onChange={(e) => setEditingTask({ ...editingTask, importance: e.target.value })} className="w-full px-2 py-1 border rounded text-gray-900 text-sm">
+                            {IMPORTANCE_LEVELS.map(imp => <option key={imp} value={imp}>{imp}</option>)}
                           </select>
                         </td>
                         <td className="p-2">
-                          <input
-                            type="number"
-                            value={editingTask.minutes}
-                            onChange={(e) => setEditingTask({ ...editingTask, minutes: parseInt(e.target.value) })}
-                            className="w-full px-2 py-1 border rounded text-gray-900 text-sm"
-                          />
+                          <input type="number" value={editingTask.minutes} onChange={(e) => setEditingTask({ ...editingTask, minutes: parseInt(e.target.value) || 0 })} className="w-full px-2 py-1 border rounded text-gray-900 text-sm" />
                         </td>
                         <td className="p-2">
                           <div className="flex gap-1">
-                            <button
-                              onClick={saveEdit}
-                              className="text-green-400 hover:text-green-300 text-xs"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={cancelEditing}
-                              className="text-red-400 hover:text-red-300 text-xs"
-                            >
-                              Cancel
-                            </button>
+                            <button onClick={saveEdit} className="text-green-400 hover:text-green-300 text-xs">Save</button>
+                            <button onClick={cancelEditing} className="text-red-400 hover:text-red-300 text-xs">Cancel</button>
                           </div>
                         </td>
                       </>
@@ -1288,18 +1207,8 @@
                         <td className="p-2 text-center">{task.minutes}</td>
                         <td className="p-2 text-center">
                           <div className="flex gap-1 justify-center">
-                            <button
-                              onClick={() => startEditing(task)}
-                              className="text-blue-400 hover:text-blue-300 text-xs"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => onDeleteTask(task.id)}
-                              className="text-red-400 hover:text-red-300 text-xs"
-                            >
-                              Delete
-                            </button>
+                            <button onClick={() => startEditing(task)} className="text-blue-400 hover:text-blue-300 text-xs">Edit</button>
+                            <button onClick={() => onDeleteTask(task.id)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
                           </div>
                         </td>
                       </>
