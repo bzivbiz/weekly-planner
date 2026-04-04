@@ -164,6 +164,7 @@
       const tasksRef = useRef(tasks);
       const weeklyDataRef = useRef(weeklyData);
       const categoriesRef = useRef(categories);
+      const touchStart = useRef(null); // for mobile swipe gesture
       useEffect(() => { tasksRef.current = tasks; }, [tasks]);
       useEffect(() => { weeklyDataRef.current = weeklyData; }, [weeklyData]);
       useEffect(() => { categoriesRef.current = categories; }, [categories]);
@@ -395,7 +396,6 @@
 
         // Swipe handling: track touch start/end, require >50px horizontal
         // movement that exceeds vertical movement to avoid scroll conflicts.
-        const touchStart = useRef(null);
         const handleTouchStart = (e) => {
           touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
         };
